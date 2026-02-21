@@ -32,10 +32,13 @@ Dica do Carlos Patrick: "Este projeto nasceu da ideia de tornar o aprendizado de
 
 
 ## Demonstração do Jogo
-Aqui estão as capturas de tela do projeto:
 
-![Menu Inicial](./screenshots/print1.png)
-![Arena de Jogo](./screenshots/print2.png)
-![Teclado Customizado](./screenshots/print3.png)
-![Teclado Customizado](./screenshots/print4.png)
-![Teclado Customizado](./screenshots/print5.png)
+Aqui estão as capturas de tela do projeto mostrando a interface e o teclado ampliado:
+
+| Menu Inicial | Aguardando Oponente | Arena de Jogo |
+| :---: | :---: | :---: |
+| ![Menu](./screenshots/print1.png) | ![Aguardando](./screenshots/print2.png) | ![Arena](./screenshots/print3.png) |
+
+| Gameplay - Multiplicação | Gameplay - Divisão |
+| :---: | :---: |
+| ![Multiplicação](./screenshots/print4.png) | ![Divisão](./screenshots/print5.png) |
