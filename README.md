@@ -28,3 +28,14 @@ Protocolo de Rede: ENetMultiplayerPeer para sincronização de dados entre os jo
 Versionamento: Git/GitHub para controle de progresso e backup.
 
 Dica do Carlos Patrick: "Este projeto nasceu da ideia de tornar o aprendizado de matemática algo emocionante e competitivo, provando que rapidez de raciocínio pode ser a sua maior força!"
+
+
+
+## Demonstração do Jogo
+Aqui estão as capturas de tela do projeto:
+
+![Menu Inicial](./screenshots/print1.png)
+![Arena de Jogo](./screenshots/print2.png)
+![Teclado Customizado](./screenshots/print3.png)
+![Teclado Customizado](./screenshots/print4.png)
+![Teclado Customizado](./screenshots/print5.png)
