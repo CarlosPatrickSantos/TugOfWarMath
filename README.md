@@ -41,4 +41,4 @@ Aqui estão as capturas de tela do projeto mostrando a interface e o teclado amp
 
 | Gameplay - Multiplicação | Gameplay - Divisão |
 | :---: | :---: |
-| ![Multiplicação](./screenshots/print4.jpeg) | ![Divisão](./screenshots/print5.jpeg) |
+| ![Adição](./screenshots/print4.jpeg) | ![Vencedor](./screenshots/print5.jpeg) |
