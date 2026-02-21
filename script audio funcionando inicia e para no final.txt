@@ -1,0 +1,342 @@
+extends Control
+
+var peer = ENetMultiplayerPeer.new()
+const PORT = 7000
+
+var value := 50.0 
+var timer := 60
+var correct_answer := 0 
+var is_game_over := false
+var player_team := 0 
+var game_mode := "ADIÇÃO" 
+
+@onready var menu_inicial = $MenuInicial
+@onready var bar_bg = $BarBG
+@onready var marcador = $BarBG/Marcador
+@onready var question_label = $QuestionLabel
+@onready var timer_label = $TimerLabel
+# Nó onde o teclado será gerado automaticamente
+@onready var keypad_container = $KeypadContainer 
+@onready var musica_fundo = $MusicaFundo
+
+func _ready():
+	menu_inicial.show() # Força o menu a aparecer no início
+	# Conexões básicas de rede
+	$MenuInicial/HostButton.pressed.connect(_on_host_pressed)
+	$MenuInicial/JoinButton.pressed.connect(_on_join_pressed)
+	
+	# Conexões de modo de jogo
+	if has_node("MenuInicial/BtnAdicao"): $MenuInicial/BtnAdicao.pressed.connect(func(): set_game_mode("ADIÇÃO"))
+	if has_node("MenuInicial/BtnSubtracao"): $MenuInicial/BtnSubtracao.pressed.connect(func(): set_game_mode("SUBTRAÇÃO"))
+	if has_node("MenuInicial/BtnMulti"): $MenuInicial/BtnMulti.pressed.connect(func(): set_game_mode("MULTIPLICAÇÃO"))
+	if has_node("MenuInicial/BtnDivisao"): $MenuInicial/BtnDivisao.pressed.connect(func(): set_game_mode("DIVISÃO"))
+	
+	# Gera o teclado virtual via código
+	create_keypad()
+	
+	multiplayer.peer_connected.connect(_on_peer_connected)
+	#set_ui_visibility(true) para ver a segunda tela 
+	set_ui_visibility(false)
+	
+	# ... seu código existente ...
+	
+	# Aumenta a fonte dos campos de entrada
+	# Aumenta a fonte dos campos de entrada
+	$Team1Input.add_theme_font_size_override("font_size", 50)
+	$Team2Input.add_theme_font_size_override("font_size", 50)
+	# Opcional: Centraliza o texto dentro do campo
+	$Team1Input.alignment = HorizontalAlignment.HORIZONTAL_ALIGNMENT_CENTER
+	$Team2Input.alignment = HorizontalAlignment.HORIZONTAL_ALIGNMENT_CENTER
+
+# --- LÓGICA DO TECLADO VIRTUAL (KEYPAD) ---
+
+func create_keypad():
+	if not keypad_container: return
+	# Isso garante que o container ocupe largura mas não suma
+	keypad_container.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	keypad_container.columns = 3
+	
+	# Limpa botões existentes para não duplicar
+	for child in keypad_container.get_children():
+		child.queue_free()
+		
+	# Cria botões de 1 a 9
+	for i in range(1, 10):
+		make_button(str(i))
+	
+	# Botão 0, Limpar (C) e Confirmar (OK)
+	make_button("0")
+	make_button("C")
+	make_button("OK")
+
+func make_button(txt):
+	var btn = Button.new()
+	btn.text = txt
+	btn.custom_minimum_size = Vector2(140, 140) # Tamanho ideal para celular
+	
+	# Aumenta o tamanho do número dentro do botão
+	btn.add_theme_font_size_override("font_size", 40)
+	# Conecta a função baseada no texto do botão
+	if txt == "C":
+		btn.pressed.connect(_on_clear_pressed)
+		btn.modulate = Color(1, 0.3, 0.3)
+	elif txt == "OK":
+		btn.pressed.connect(_on_submit_keypad)
+		btn.modulate = Color(0.3, 1, 0.3)
+	else:
+		btn.pressed.connect(func(): _on_number_pressed(txt))
+		
+	keypad_container.add_child(btn)
+
+func _on_number_pressed(valor: String):
+	if player_team == 1: $Team1Input.text += valor
+	else: $Team2Input.text += valor
+
+func _on_clear_pressed():
+	if player_team == 1: $Team1Input.text = ""
+	else: $Team2Input.text = ""
+
+
+
+func _on_submit_keypad():
+	if player_team == 1: _on_team1_answer()
+	else: _on_team2_answer()
+
+# --- LÓGICA DO JOGO E REDE ---
+
+func set_game_mode(mode):
+	game_mode = mode
+	print("Modo selecionado: ", game_mode)
+
+func update_bar():
+	if not bar_bg or not marcador: return
+	
+	# Pega a largura da imagem da corda (TextureRect)
+	var largura_total = bar_bg.size.x
+	
+	# Calcula a posição baseada no 'value' (0 a 100)
+	# 0 = Extrema esquerda | 100 = Extrema direita
+	var destino_x = (value / 100.0) * largura_total
+	
+	var tween = create_tween()
+	
+	# Como o Sprite2D está centralizado, movemos o 'position.x' dele
+	# O 0.5 é o tempo da animação para ficar suave
+	tween.tween_property(marcador, "position:x", destino_x, 0.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+@rpc("any_peer", "call_local")
+func check_answer_server(answer, team):
+	if !multiplayer.is_server() or is_game_over: return
+	var deslocamento = 10.0
+	var acertou = (answer == correct_answer)
+	
+	if team == 1:
+		if acertou: value -= deslocamento 
+		else: value += deslocamento
+	elif team == 2:
+		if acertou: value += deslocamento 
+		else: value -= deslocamento 
+
+	value = clamp(value, 0.0, 100.0)
+	sync_game_state.rpc(value)
+
+	if value <= 0: show_game_over.rpc("AZUL VENCEU!")
+	elif value >= 100: show_game_over.rpc("VERMELHO VENCEU!")
+	elif !is_game_over: generate_new_question()
+
+@rpc("authority", "call_local")
+func sync_question_ui(a, b, op_symbol, result):
+	correct_answer = result
+	question_label.text = "%d %s %d = ?" % [a, op_symbol, b]
+
+func generate_new_question():
+	if !multiplayer.is_server(): return
+	var a = randi() % 10 + 1
+	var b = randi() % 10 + 1
+	var symbol = "+"
+	var result = 0
+	
+	match game_mode:
+		"ADIÇÃO":
+			symbol = "+"
+			result = a + b
+		"SUBTRAÇÃO":
+			symbol = "-"
+			if a < b:
+				var temp = a
+				a = b
+				b = temp
+			result = a - b
+		"MULTIPLICAÇÃO":
+			symbol = "x"
+			result = a * b
+		"DIVISÃO":
+			symbol = "÷"
+			result = randi() % 10 + 1
+			a = result * b 
+			
+	sync_question_ui.rpc(a, b, symbol, result)
+
+@rpc("authority", "call_local")
+func sync_game_state(new_value):
+	value = new_value
+	update_bar()
+
+@rpc("authority", "call_local")
+func sync_timer(new_timer):
+	timer = new_timer
+	timer_label.text = "Tempo: %d" % timer
+
+@rpc("authority", "call_local")
+func sync_game_mode(mode):
+	game_mode = mode
+
+func start_timer():
+	if !multiplayer.is_server(): return
+	var t = get_tree().create_timer(1.0)
+	t.timeout.connect(func():
+		if !is_game_over:
+			timer -= 1
+			sync_timer.rpc(timer)
+			if timer <= 0:
+				var winner = "AZUL VENCEU!" if value < 50 else "VERMELHO VENCEU!"
+				show_game_over.rpc("TEMPO ESGOTADO!\n" + winner)
+			else: start_timer()
+	)
+
+func _on_host_pressed():
+	peer.create_server(PORT)
+	multiplayer.multiplayer_peer = peer
+	player_team = 1
+	menu_inicial.visible = false
+	question_label.visible = true 
+	
+	var meu_ip = ""
+	var enderecos = IP.get_local_addresses()
+	for ip in enderecos:
+		if ip.begins_with("192.168.") or ip.begins_with("10."):
+			meu_ip = ip
+			break
+	if meu_ip == "": meu_ip = "Verifique o Wi-Fi"
+	question_label.text = "AGUARDANDO OPONENTE...\nIP: " + meu_ip
+
+func _on_join_pressed():
+	var ip = $MenuInicial/IPInput.text if $MenuInicial/IPInput.text != "" else "127.0.0.1"
+	peer.create_client(ip, PORT)
+	multiplayer.multiplayer_peer = peer
+	player_team = 2
+	menu_inicial.visible = false
+	question_label.visible = true
+	question_label.text = "CONECTANDO..."
+
+func _on_peer_connected(_id):
+	if multiplayer.is_server():
+		sync_game_mode.rpc(game_mode)
+		start_game.rpc()
+
+@rpc("authority", "call_local")
+func start_game():
+	set_ui_visibility(true)
+	update_bar()
+	if musica_fundo: musica_fundo.play() # <--- Adicionado
+	if multiplayer.is_server():
+		question_label.text = "PREPARAR..." 
+		await get_tree().create_timer(1.5).timeout
+		generate_new_question()
+		start_timer()
+
+func _on_team1_answer():
+	if $Team1Input.text != "" and player_team == 1:
+		check_answer_server.rpc_id(1, int($Team1Input.text), 1)
+		$Team1Input.text = ""
+
+func _on_team2_answer():
+	if $Team2Input.text != "" and player_team == 2:
+		check_answer_server.rpc_id(1, int($Team2Input.text), 2)
+		$Team2Input.text = ""
+
+func set_ui_visibility(p_visible: bool):
+	menu_inicial.visible = !p_visible
+	bar_bg.visible = p_visible
+	timer_label.visible = p_visible
+	question_label.visible = p_visible # IMPORTANTE: Esconde a mensagem no menu
+	if keypad_container: keypad_container.visible = p_visible
+	
+	# Esconde os campos de texto técnicos, já que usaremos o Keypad e as labels
+	$Team1Input.visible = p_visible and player_team == 1
+	$Team2Input.visible = p_visible and player_team == 2
+	# Botões de OK originais podem ser escondidos pois o Keypad já tem o dele
+	if has_node("Team1Button"): $Team1Button.visible = false
+	if has_node("Team2Button"): $Team2Button.visible = false
+
+@rpc("authority", "call_local")
+func show_game_over(txt):
+	is_game_over = true
+	if musica_fundo: musica_fundo.stop() # <--- Adicionado
+	question_label.text = txt
+	var btn = Button.new()
+	btn.name = "RestartBtn"
+	btn.text = "JOGAR NOVAMENTE"
+	btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	add_child(btn)
+	btn.pressed.connect(func(): if multiplayer.is_server(): reset_game_logic.rpc())
+	# Adiciona o botão de Voltar ao Menu
+	create_back_to_menu_button()
+
+@rpc("authority", "call_local")
+func reset_game_logic():
+	is_game_over = false
+	value = 50.0
+	timer = 60
+	
+	# Remove os botões de fim de jogo da tela
+	if has_node("RestartBtn"): get_node("RestartBtn").queue_free()
+	if has_node("BackToMenuBtn"): get_node("BackToMenuBtn").queue_free() # Adicione esta linha
+	
+	update_bar()
+	
+	# Reativa a visibilidade da interface de jogo (incluindo o teclado)
+	set_ui_visibility(true) 
+	
+	if multiplayer.is_server():
+		generate_new_question()
+		start_timer()
+		start_game()
+		
+func create_back_to_menu_button():
+	var btn_menu = Button.new()
+	btn_menu.name = "BackToMenuBtn"
+	btn_menu.text = "SAIR PARA O MENU"
+	btn_menu.custom_minimum_size = Vector2(300, 80)
+	btn_menu.modulate = Color(1, 0.5, 0.5) # Deixa o botão avermelhado
+	add_child(btn_menu)
+	
+	btn_menu.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	btn_menu.position.y -= 600 # Fica abaixo do botão "Jogar Novamente"
+	btn_menu.position.x -= 200 # Move o botão para a esquerda (aumente o número para mover mais)
+	
+	btn_menu.pressed.connect(_on_back_to_menu_pressed)
+	
+
+func _on_back_to_menu_pressed():
+	# 1. PARA O TIMER IMEDIATAMENTE
+	is_game_over = true 
+	if musica_fundo: musica_fundo.stop() # <--- Adicionado
+	
+	# 2. Fecha a conexão de rede
+	multiplayer.multiplayer_peer = null
+	peer = ENetMultiplayerPeer.new()
+	
+	# 3. Limpa botões de Game Over se existirem
+	if has_node("RestartBtn"): $RestartBtn.queue_free()
+	if has_node("BackToMenuBtn"): $BackToMenuBtn.queue_free()
+	
+	# 4. Reseta TODAS as variáveis para o estado inicial
+	value = 50.0
+	timer = 60
+	timer_label.text = "Tempo: 60" # Reseta o texto visualmente
+	is_game_over = false
+	
+	# 5. Volta para o menu verde
+	set_ui_visibility(false)
+	

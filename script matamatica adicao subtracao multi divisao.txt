@@ -1,0 +1,207 @@
+extends Control
+
+var peer = ENetMultiplayerPeer.new()
+const PORT = 7000
+
+var value := 50.0 
+var timer := 60
+var correct_answer := 0 
+var is_game_over := false
+var player_team := 0 
+# Variável para armazenar o tipo de jogo escolhido
+var game_mode := "ADIÇÃO" 
+
+@onready var menu_inicial = $MenuInicial
+@onready var bar_bg = $BarBG
+@onready var marcador = $BarBG/Marcador
+@onready var question_label = $QuestionLabel
+@onready var timer_label = $TimerLabel
+
+func _ready():
+	$MenuInicial/HostButton.pressed.connect(_on_host_pressed)
+	$MenuInicial/JoinButton.pressed.connect(_on_join_pressed)
+	$Team1Button.pressed.connect(_on_team1_answer)
+	$Team2Button.pressed.connect(_on_team2_answer)
+	
+	# Conectar os novos botões de modo (Você deve criá-los no MenuInicial)
+	if has_node("MenuInicial/BtnAdicao"): $MenuInicial/BtnAdicao.pressed.connect(func(): set_game_mode("ADIÇÃO"))
+	if has_node("MenuInicial/BtnSubtracao"): $MenuInicial/BtnSubtracao.pressed.connect(func(): set_game_mode("SUBTRAÇÃO"))
+	if has_node("MenuInicial/BtnMulti"): $MenuInicial/BtnMulti.pressed.connect(func(): set_game_mode("MULTIPLICAÇÃO"))
+	if has_node("MenuInicial/BtnDivisao"): $MenuInicial/BtnDivisao.pressed.connect(func(): set_game_mode("DIVISÃO"))
+	
+	multiplayer.peer_connected.connect(_on_peer_connected)
+	set_ui_visibility(false)
+
+func set_game_mode(mode):
+	game_mode = mode
+	print("Modo selecionado: ", game_mode)
+
+# --- CABO DE GUERRA ---
+
+func update_bar():
+	if not has_node("BarBG") or not has_node("BarBG/Marcador"): return
+	var largura_total = bar_bg.size.x
+	var destino_x = (value / 100.0) * largura_total
+	var tween = create_tween()
+	tween.tween_property(marcador, "position:x", destino_x - (marcador.size.x / 2.0), 0.3).set_trans(Tween.TRANS_SINE)
+
+@rpc("any_peer", "call_local")
+func check_answer_server(answer, team):
+	if !multiplayer.is_server() or is_game_over: return
+	var deslocamento = 10.0
+	var acertou = (answer == correct_answer)
+	
+	if team == 1:
+		if acertou: value -= deslocamento 
+		else: value += deslocamento
+	elif team == 2:
+		if acertou: value += deslocamento 
+		else: value -= deslocamento 
+
+	value = clamp(value, 0.0, 100.0)
+	sync_game_state.rpc(value)
+
+	if value <= 0: show_game_over.rpc("AZUL VENCEU!")
+	elif value >= 100: show_game_over.rpc("VERMELHO VENCEU!")
+	elif !is_game_over: generate_new_question()
+
+# --- SINCRONIZAÇÃO DA PERGUNTA ---
+
+@rpc("authority", "call_local")
+func sync_question_ui(a, b, op_symbol, result):
+	correct_answer = result
+	question_label.text = "%d %s %d = ?" % [a, op_symbol, b]
+
+func generate_new_question():
+	if !multiplayer.is_server(): return
+	var a = randi() % 10 + 1
+	var b = randi() % 10 + 1
+	var symbol = "+"
+	var result = 0
+	
+	match game_mode:
+		"ADIÇÃO":
+			symbol = "+"
+			result = a + b
+		"SUBTRAÇÃO":
+			symbol = "-"
+			if a < b: # Evitar números negativos para facilitar
+				var temp = a
+				a = b
+				b = temp
+			result = a - b
+		"MULTIPLICAÇÃO":
+			symbol = "x"
+			result = a * b
+		"DIVISÃO":
+			symbol = "÷"
+			# Garante divisão exata
+			result = randi() % 10 + 1
+			a = result * b 
+			
+	sync_question_ui.rpc(a, b, symbol, result)
+
+# --- SINCRONIZAÇÃO DE ESTADO ---
+
+@rpc("authority", "call_local")
+func sync_game_state(new_value):
+	value = new_value
+	update_bar()
+
+@rpc("authority", "call_local")
+func sync_timer(new_timer):
+	timer = new_timer
+	timer_label.text = "Tempo: %d" % timer
+
+@rpc("authority", "call_local")
+func sync_game_mode(mode):
+	game_mode = mode
+
+func start_timer():
+	if !multiplayer.is_server(): return
+	var t = get_tree().create_timer(1.0)
+	t.timeout.connect(func():
+		if !is_game_over:
+			timer -= 1
+			sync_timer.rpc(timer)
+			if timer <= 0:
+				var winner = "AZUL VENCEU!" if value < 50 else "VERMELHO VENCEU!"
+				show_game_over.rpc("TEMPO ESGOTADO!\n" + winner)
+			else: start_timer()
+	)
+
+# --- REDE E UI ---
+
+func _on_host_pressed():
+	peer.create_server(PORT)
+	multiplayer.multiplayer_peer = peer
+	player_team = 1
+	menu_inicial.visible = false
+	question_label.visible = true 
+	question_label.text = "AGUARDANDO OPONENTE..."
+
+func _on_join_pressed():
+	var ip = $MenuInicial/IPInput.text if $MenuInicial/IPInput.text != "" else "127.0.0.1"
+	peer.create_client(ip, PORT)
+	multiplayer.multiplayer_peer = peer
+	player_team = 2
+	menu_inicial.visible = false
+	question_label.visible = true
+	question_label.text = "CONECTANDO..."
+
+func _on_peer_connected(_id):
+	if multiplayer.is_server():
+		# Sincroniza o modo de jogo com o cliente que acabou de entrar
+		sync_game_mode.rpc(game_mode)
+		start_game.rpc()
+
+@rpc("authority", "call_local")
+func start_game():
+	set_ui_visibility(true)
+	update_bar()
+	if multiplayer.is_server():
+		question_label.text = "PREPARAR..." 
+		await get_tree().create_timer(1.5).timeout
+		generate_new_question()
+		start_timer()
+
+func _on_team1_answer():
+	if $Team1Input.text != "" and player_team == 1:
+		check_answer_server.rpc_id(1, int($Team1Input.text), 1)
+		$Team1Input.text = ""
+
+func _on_team2_answer():
+	if $Team2Input.text != "" and player_team == 2:
+		check_answer_server.rpc_id(1, int($Team2Input.text), 2)
+		$Team2Input.text = ""
+
+func set_ui_visibility(p_visible: bool):
+	menu_inicial.visible = !p_visible
+	bar_bg.visible = p_visible
+	timer_label.visible = p_visible
+	$Team1Input.visible = p_visible and player_team == 1
+	$Team1Button.visible = p_visible and player_team == 1
+	$Team2Input.visible = p_visible and player_team == 2
+	$Team2Button.visible = p_visible and player_team == 2
+
+@rpc("authority", "call_local")
+func show_game_over(txt):
+	is_game_over = true
+	question_label.text = txt
+	var btn = Button.new()
+	btn.name = "RestartBtn"
+	btn.text = "JOGAR NOVAMENTE"
+	btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	add_child(btn)
+	btn.pressed.connect(func(): if multiplayer.is_server(): reset_game_logic.rpc())
+
+@rpc("authority", "call_local")
+func reset_game_logic():
+	is_game_over = false
+	value = 50.0
+	timer = 60
+	if has_node("RestartBtn"): get_node("RestartBtn").queue_free()
+	update_bar()
+	if multiplayer.is_server():
+		generate_new_question()
+		start_timer()
