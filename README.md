@@ -37,8 +37,8 @@ Aqui estão as capturas de tela do projeto mostrando a interface e o teclado amp
 
 | Menu Inicial | Aguardando Oponente | Arena de Jogo |
 | :---: | :---: | :---: |
-| ![Menu](./screenshots/print1.png) | ![Aguardando](./screenshots/print2.png) | ![Arena](./screenshots/print3.png) |
+| ![Menu](./screenshots/print1.jpeg) | ![Aguardando](./screenshots/print2.jpeg) | ![Arena](./screenshots/print3.jpeg) |
 
 | Gameplay - Multiplicação | Gameplay - Divisão |
 | :---: | :---: |
-| ![Multiplicação](./screenshots/print4.png) | ![Divisão](./screenshots/print5.png) |
+| ![Multiplicação](./screenshots/print4.jpeg) | ![Divisão](./screenshots/print5.jpeg) |
